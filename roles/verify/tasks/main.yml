@@ -1,0 +1,93 @@
+---
+- name: Check that the tools run
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - emacs --version
+    - node --version
+    - claude --version
+    - codex --version
+    - herdr --version
+    - uv --version
+    - gh --version
+    - glab --version
+  changed_when: false
+
+- name: Check that each MCP server answers over stdio
+  ansible.builtin.script: "mcp_smoke.py {{ ([item.command] + item.args) | map('quote') | join(' ') }}"
+  args:
+    executable: python3
+  loop: "{{ mcp_servers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+  timeout: 180
+
+- name: Read what the agents have registered
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - claude mcp list
+    - codex mcp list
+    - claude plugin list
+    - codex plugin list
+  register: agent_config
+  changed_when: false
+
+- name: Read which GSD installs exist
+  ansible.builtin.stat:
+    path: "{{ item }}/gsd-core"
+  loop: [~/.claude, ~/.codex]
+  register: gsd_installs
+
+- name: Check that both agents got their MCP servers, Superpowers and GSD
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - mcp_servers | map(attribute='name') | reject('in', agent_config.results[0].stdout) | length == 0
+      - mcp_servers | map(attribute='name') | reject('in', agent_config.results[1].stdout) | length == 0
+      - "'superpowers@claude-plugins-official' in agent_config.results[2].stdout"
+      - agent_config.results[3].stdout is search('superpowers@superpowers-dev\s+installed')
+      - gsd_installs.results | rejectattr('stat.exists') | length == 0
+
+- name: Check the agent logins
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - claude auth status
+    - codex login status
+  register: agent_logins
+  changed_when: false
+  failed_when: false
+
+- name: Try each git host over SSH
+  ansible.builtin.command: "ssh -T -o BatchMode=yes -o ConnectTimeout=10 git@{{ item.host }}"
+  loop: "{{ git_forges }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: forge_checks
+  changed_when: false
+  failed_when: false
+
+- name: Read this machine's public key
+  ansible.builtin.slurp:
+    src: "{{ git_ssh_key }}.pub"
+  register: public_key
+
+- name: What's left to do
+  ansible.builtin.debug:
+    msg: |
+      Everything is installed and checked.
+
+      {% if agent_logins.results[0].rc != 0 %}
+      Log in to Claude Code:  run `claude` and open the link it prints in any browser.
+      {% endif %}
+      {% if agent_logins.results[1].rc != 0 %}
+      Log in to Codex:        codex login --device-auth
+      {% endif %}
+      {% for check in forge_checks.results if check.rc == 255 %}
+      Add this machine's key to {{ check.item.name }}: {{ check.item.keys_url }}
+      {% endfor %}
+      {% if forge_checks.results | selectattr('rc', 'eq', 255) | list | length > 0 %}
+
+      {{ public_key.content | b64decode | trim }}
+
+      {% endif %}
+      Start working:          ssh {{ ansible_facts.user_id }}@{{ inventory_hostname }}, then run `herdr`.

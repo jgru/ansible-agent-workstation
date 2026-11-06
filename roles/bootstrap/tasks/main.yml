@@ -1,0 +1,50 @@
+---
+# Many VPSes start out with only root. The agents shouldn't run as root (Claude
+# Code won't skip its permission prompts there), so from_root.yml creates
+# login_user and the rest of the run logs in as that user instead.
+- name: Check whether we logged in as root
+  ansible.builtin.raw: id -u
+  register: bootstrap_uid
+  changed_when: false
+
+# su keeps the login user's PATH, which on Debian has no sbin directories, and
+# dpkg refuses to run without them. root needs no become, and may have no sudo.
+- name: Require Debian 13, then make sure Python and sudo are installed
+  ansible.builtin.raw: |
+    export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    . /etc/os-release
+    if [ "$ID" != debian ] || [ "$VERSION_ID" != 13 ]; then
+      echo "This playbook targets Debian 13, found: $PRETTY_NAME" >&2
+      exit 1
+    fi
+    if ! command -v python3 >/dev/null || ! command -v sudo >/dev/null; then
+      apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 sudo
+    fi
+  become: "{{ bootstrap_uid.stdout | trim != '0' }}"
+  become_method: "{{ bootstrap_become_method | default('sudo') }}"
+  changed_when: false
+
+- name: Create the login user and log in as it
+  ansible.builtin.include_tasks: from_root.yml
+  when: bootstrap_uid.stdout | trim == '0'
+
+- name: Gather facts as the login user
+  ansible.builtin.setup:
+    gather_subset: [min]
+
+# setup.sh stops before this, but running the playbook directly as root on the
+# machine itself would get here: a local connection can't change user.
+- name: Stop if the agents would run as root
+  ansible.builtin.assert:
+    that: ansible_facts.user_id != 'root'
+    fail_msg: >-
+      Still running as root, which happens when the setup runs on the machine
+      itself. Log in as {{ login_user }} and run it again.
+    quiet: true
+
+- name: Allow the login user to sudo without a password
+  ansible.builtin.include_tasks: sudoers.yml
+  vars:
+    sudoers_user: "{{ ansible_facts.user_id }}"
+  when: passwordless_sudo | bool

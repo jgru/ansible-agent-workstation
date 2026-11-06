@@ -1,0 +1,59 @@
+---
+# Included only when logged in as root, before facts are gathered.
+- name: Check that the login user can be created
+  ansible.builtin.assert:
+    that:
+      - login_user is match('^[a-z_][a-z0-9._-]*$')
+      - login_user != 'root'
+      - passwordless_sudo | bool
+    fail_msg: >-
+      Logged in as root, the setup creates login_user and sets it up instead.
+      It needs a lowercase name other than root (it is "{{ login_user }}"; set it
+      with -e login_user=NAME), and passwordless_sudo, because the user gets no
+      password.
+    quiet: true
+
+- name: Create the login user
+  ansible.builtin.user:
+    name: "{{ login_user }}"
+    shell: /bin/bash
+    groups: [sudo]
+    append: true
+  register: login_account
+
+- name: Read the SSH keys that log in as root
+  ansible.builtin.slurp:
+    src: /root/.ssh/authorized_keys
+  register: root_keys
+
+- name: Create the login user's ~/.ssh
+  ansible.builtin.file:
+    path: "{{ login_account.home }}/.ssh"
+    state: directory
+    owner: "{{ login_user }}"
+    group: "{{ login_account.group }}"
+    mode: "0700"
+
+# One line at a time, so keys the user already has are kept.
+- name: Let the same keys log in as the login user
+  ansible.builtin.lineinfile:
+    path: "{{ login_account.home }}/.ssh/authorized_keys"
+    line: "{{ item }}"
+    create: true
+    owner: "{{ login_user }}"
+    group: "{{ login_account.group }}"
+    mode: "0600"
+  loop: "{{ (root_keys.content | b64decode).splitlines() | map('trim') | reject('match', '#') | select | list }}"
+  loop_control:
+    label: "{{ item.split() | last }}"
+
+# Before switching, because everything after it uses sudo as the login user.
+- name: Allow the login user to sudo without a password
+  ansible.builtin.include_tasks: sudoers.yml
+  vars:
+    sudoers_user: "{{ login_user }}"
+
+# A variable outranks setup.sh's -u root, and persists into the later plays.
+- name: Log in as the login user from here on
+  ansible.builtin.set_fact:
+    ansible_user: "{{ login_user }}"

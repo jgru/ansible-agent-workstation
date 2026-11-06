@@ -1,0 +1,62 @@
+---
+- name: Install nftables
+  ansible.builtin.apt:
+    name: nftables
+    install_recommends: false
+
+- name: Check that this machine can load firewall rules
+  ansible.builtin.command: /usr/sbin/nft list tables
+  register: firewall_nft
+  changed_when: false
+  failed_when: false
+
+# qemu, which Docker uses to emulate other CPUs, passes only a few kinds of
+# netlink socket to the kernel, and nftables' isn't one of them.
+- name: Stop if it can't
+  ansible.builtin.assert:
+    that: firewall_nft.rc == 0
+    fail_msg: >-
+      This machine can't load firewall rules ({{ firewall_nft.stderr | trim }}).
+      That happens on VPSes that are containers rather than virtual machines, and
+      under emulation, such as x86_64 on Apple Silicon: run test/run.sh with
+      PLATFORM=linux/arm64 there. On such a VPS, use the provider's firewall and
+      set firewall_enabled=false.
+    quiet: true
+
+- name: Read which ports SSH listens on
+  ansible.builtin.command: /usr/sbin/sshd -T
+  register: sshd_settings
+  changed_when: false
+  failed_when: false
+
+# SSH_CONNECTION ends with the port this connection came in on, as the machine
+# sees it, so the run can't lock itself out even if sshd -T misses something.
+- name: Write the firewall rules
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    mode: "0755"
+    validate: /usr/sbin/nft -c -f %s
+  vars:
+    firewall_ssh_ports: >-
+      {{ (sshd_settings.stdout_lines | select('match', 'port ') | map('regex_replace', '^port ', '') | list
+          + (ansible_facts.env.SSH_CONNECTION | default('')).split()[3:4])
+         | unique | sort | default(['22'], true) }}
+  register: firewall_rules
+
+- name: Check that the rules are loaded
+  ansible.builtin.command: /usr/sbin/nft list table inet host_firewall
+  register: firewall_loaded
+  changed_when: false
+  failed_when: false
+
+# Loading is atomic, and established connections, this one included, stay up.
+- name: Load the rules
+  ansible.builtin.command: /usr/sbin/nft -f /etc/nftables.conf
+  when: firewall_rules is changed or firewall_loaded.rc != 0
+  changed_when: true
+
+- name: Load the rules at boot
+  ansible.builtin.systemd_service:
+    name: nftables
+    enabled: true

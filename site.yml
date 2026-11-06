@@ -1,0 +1,22 @@
+---
+- name: Prepare the system
+  hosts: all
+  gather_facts: false
+  roles:
+    - { role: bootstrap, tags: [always] }
+    - { role: base, become: true, tags: [base] }
+    - { role: firewall, become: true, tags: [firewall], when: firewall_enabled | bool }
+
+# Facts come from the bootstrap role, gathered as the login user, so user_dir
+# and user_id below describe that user and not root.
+- name: Set up the development environment for the login user
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: "{{ ansible_facts.user_dir }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  roles:
+    - { role: agents, tags: [agents] }
+    - { role: git_access, tags: [git] }
+    - { role: mcp_servers, tags: [mcp] }
+    - { role: spec_driven, tags: [spec] }
+    - { role: verify, tags: [always] }

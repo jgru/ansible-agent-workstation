@@ -1,0 +1,56 @@
+---
+- name: "Check the {{ forge.cli }} login"
+  ansible.builtin.command: "{{ forge.cli }} auth status --hostname {{ forge.host }}"
+  register: forge_before
+  changed_when: false
+  failed_when: false
+
+- name: "Log {{ forge.cli }} in with the token"
+  ansible.builtin.command:
+    cmd: "{{ forge.cli }} auth login --hostname {{ forge.host }} --git-protocol ssh {{ forge.token_stdin_flag }}"
+    stdin: "{{ lookup('vars', forge.token_var) }}"
+  register: forge_login
+  when:
+    - lookup('vars', forge.token_var) | length > 0
+    - forge_before.rc != 0
+  changed_when: true
+  failed_when: false
+  no_log: true
+
+# Checked again because glab exits 0 and saves the token even when it is invalid.
+- name: "Confirm the {{ forge.cli }} login"
+  ansible.builtin.command: "{{ forge.cli }} auth status --hostname {{ forge.host }}"
+  register: forge_after
+  changed_when: false
+  failed_when: false
+
+- name: "Stop if {{ forge.name }} rejected the token"
+  ansible.builtin.fail:
+    msg: "{{ forge.name }} rejected the token: {{ forge_login.stderr | default('') }} {{ forge_after.stderr }}"
+  when:
+    - lookup('vars', forge.token_var) | length > 0
+    - forge_after.rc != 0
+
+# ssh exits 255 when it can't authenticate. A successful GitHub login exits 1.
+- name: "Try {{ forge.name }} over SSH"
+  ansible.builtin.command: "ssh -T -o BatchMode=yes -o ConnectTimeout=10 git@{{ forge.host }}"
+  register: forge_ssh
+  changed_when: false
+  failed_when: false
+
+# Not fatal: a token may lack the scope for this, and the summary at the end
+# gives the manual route.
+- name: "Upload the SSH key to {{ forge.name }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ forge.cli }}"
+      - ssh-key
+      - add
+      - "{{ git_ssh_key }}.pub"
+      - --title
+      - "{{ ansible_facts.user_id }}@{{ ansible_facts.hostname }}"
+  when:
+    - forge_after.rc == 0
+    - forge_ssh.rc == 255
+  changed_when: true
+  failed_when: false

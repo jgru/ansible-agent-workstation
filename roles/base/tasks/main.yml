@@ -1,0 +1,48 @@
+---
+- name: Install what adding the repositories needs
+  ansible.builtin.apt:
+    name: [ca-certificates, python3-debian]
+    update_cache: true
+    cache_valid_time: 3600
+    install_recommends: false
+
+# Debian 13 ships Node 20 and a gh from early 2024.
+- name: Add the Node.js and GitHub CLI repositories
+  ansible.builtin.deb822_repository:
+    name: "{{ item.name }}"
+    types: deb
+    uris: "{{ item.uri }}"
+    suites: "{{ item.suite }}"
+    components: main
+    signed_by: "{{ item.key }}"
+  loop:
+    - name: nodesource
+      uri: "https://deb.nodesource.com/node_{{ nodejs_major }}.x"
+      suite: nodistro
+      key: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+    - name: github-cli
+      uri: https://cli.github.com/packages
+      suite: stable
+      key: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+  loop_control:
+    label: "{{ item.name }}"
+  register: apt_repositories
+
+- name: Refresh the package index
+  ansible.builtin.apt:
+    update_cache: true
+  when: apt_repositories is changed
+
+- name: Install packages
+  ansible.builtin.apt:
+    name: "{{ base_packages + [emacs_package] + (['texlive-full'] if latex_enabled | bool else []) + extra_packages }}"
+    install_recommends: false
+
+# A headless Debian never suspends by itself, but a desktop added later would
+# (GNOME's login screen suspends after about 20 minutes). Masked, nothing can.
+# Undo with: sudo systemctl unmask sleep.target suspend.target ...
+- name: Never sleep, so agents keep running
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    masked: true
+  loop: [sleep.target, suspend.target, hibernate.target, hybrid-sleep.target]

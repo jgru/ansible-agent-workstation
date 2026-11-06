@@ -1,0 +1,9 @@
+---
+- name: "Let {{ sudoers_user }} sudo without a password"
+  ansible.builtin.copy:
+    content: "{{ sudoers_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    dest: "/etc/sudoers.d/90-{{ sudoers_user | replace('.', '_') }}"
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+  become: true
+  become_method: "{{ bootstrap_become_method | default('sudo') }}"

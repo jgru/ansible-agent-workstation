@@ -1,0 +1,2 @@
+.venv/
+group_vars/all/secrets.yml

@@ -1,0 +1,65 @@
+---
+- name: Check the git identity
+  ansible.builtin.command: "git config --global {{ item.key }}"
+  loop:
+    - { key: user.name, value: "{{ git_name }}" }
+    - { key: user.email, value: "{{ git_email }}" }
+  loop_control:
+    label: "{{ item.key }}"
+  register: git_identity
+  changed_when: false
+  failed_when: false
+
+- name: Set the git identity
+  ansible.builtin.command:
+    argv: [git, config, --global, "{{ item.item.key }}", "{{ item.item.value }}"]
+  loop: "{{ git_identity.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - item.item.value | length > 0
+    - item.stdout != item.item.value
+  changed_when: true
+
+- name: Create ~/.ssh
+  ansible.builtin.file:
+    path: ~/.ssh
+    state: directory
+    mode: "0700"
+
+# No passphrase: agents keep working unattended after you disconnect.
+- name: Generate this machine's SSH key
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -t
+      - ed25519
+      - -N
+      - ""
+      - -C
+      - "{{ ansible_facts.user_id }}@{{ ansible_facts.hostname }}"
+      - -f
+      - "{{ git_ssh_key }}"
+    creates: "{{ git_ssh_key }}"
+
+- name: Trust the known git hosts
+  ansible.builtin.known_hosts:
+    name: "{{ item.key }}"
+    key: "{{ item.key }} {{ item.value }}"
+  loop: "{{ git_known_hosts | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Trust a self-hosted GitLab on first use
+  ansible.builtin.shell: >-
+    ssh-keygen -F {{ gitlab_host | quote }} >/dev/null
+    || ssh-keyscan -t ed25519 {{ gitlab_host | quote }} >> ~/.ssh/known_hosts
+  when: gitlab_host not in git_known_hosts
+  changed_when: false
+
+- name: Log in and upload the key where a token is available
+  ansible.builtin.include_tasks: forge.yml
+  loop: "{{ git_forges }}"
+  loop_control:
+    loop_var: forge
+    label: "{{ forge.name }}"

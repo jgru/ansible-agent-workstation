@@ -1,0 +1,29 @@
+---
+base_packages:
+  # Build tools and utilities from the container image
+  - automake
+  - autopoint
+  - bison
+  - build-essential
+  - byacc
+  - curl
+  - dnsutils
+  - flex
+  - git
+  - iproute2
+  - libtool
+  - pkg-config
+  - poppler-utils
+  - procps
+  - python3-pip
+  - python3-venv
+  - socat
+  # Used by this playbook and by the agents
+  - jq
+  - openssh-client
+  - ripgrep
+  - unzip
+  # From the repositories below, except glab
+  - gh
+  - glab
+  - nodejs

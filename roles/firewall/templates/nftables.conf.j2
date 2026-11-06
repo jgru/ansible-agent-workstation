@@ -1,0 +1,35 @@
+#!/usr/sbin/nft -f
+# Written by the setup's firewall role and overwritten on its next run. Change
+# the firewall_* settings in group_vars/all/main.yml instead.
+#
+# Incoming connections are dropped unless listed below. Outgoing traffic, and
+# the replies to it, pass.
+
+# Replaces only this table, so rules that other software loaded are kept.
+table inet host_firewall
+delete table inet host_firewall
+
+table inet host_firewall {
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		ct state established,related accept
+		ct state invalid drop
+		iif lo accept
+
+		# IPv6 can't find its neighbours without ICMPv6.
+		meta l4proto { icmp, ipv6-icmp } accept
+		# DHCP lease renewals
+		udp sport 67 udp dport 68 accept
+		udp sport 547 udp dport 546 accept
+
+		tcp dport { {{ firewall_ssh_ports | join(', ') }} } accept comment "SSH"
+{% for entry in firewall_open_ports %}
+{%   set parts = (entry | string).split('/') %}
+		{{ parts[1] | default('tcp') }} dport {{ parts[0] }} accept
+{% endfor %}
+{% for network in firewall_trusted_networks %}
+		{{ 'ip6' if ':' in network else 'ip' }} saddr {{ network }} accept
+{% endfor %}
+	}
+}

@@ -1,0 +1,98 @@
+---
+# Settings you are likely to want to change. Override any of them for one run
+# with -e, e.g. ./setup.sh nuc -e latex_enabled=true
+# -e passes values as strings, so the roles read the true/false settings through
+# the bool filter. Use it too when you add one.
+
+# --- System ---------------------------------------------------------------
+
+# emacs-nox has no GUI dependencies. Use `emacs` if the machine has a desktop.
+emacs_package: emacs-nox
+
+# texlive-full is several GB and takes a while to install.
+latex_enabled: true
+
+extra_packages: []
+
+nodejs_major: 24
+
+# Lets setup.sh re-run without a password and agents install packages, as in the
+# container image. On this machine that means any agent can become root.
+# With false, the login user must already be allowed to sudo. Setting it to false
+# does not remove an existing rule: sudo rm /etc/sudoers.d/90-<user>
+passwordless_sudo: true
+
+# Connecting as root, as on a VPS that starts with only root, creates this user
+# with root's SSH keys and sets everything up for it instead, so the agents
+# don't run as root. Defaults to your username on the machine running Ansible.
+login_user: "{{ lookup('env', 'USER') }}"
+
+# --- Firewall -------------------------------------------------------------
+
+# Drops incoming connections except SSH, on the ports sshd listens on and the
+# one the setup connects through. Agents start dev servers that listen on every
+# address, which on a VPS means the internet. Setting it to false does not
+# remove the rules: sudo nft delete table inet host_firewall, then
+# sudo systemctl disable nftables
+firewall_enabled: true
+
+# Ports anyone may connect to besides SSH, as "443/tcp" or "41641/udp".
+firewall_open_ports: []
+
+# Networks that may reach every port, e.g. ["192.168.1.0/24"] so a dev server on
+# the NUC opens in your laptop's browser, or Tailscale's "100.64.0.0/10".
+firewall_trusted_networks: []
+
+# --- Git hosting ----------------------------------------------------------
+
+# Taken from the git config of the machine running Ansible.
+git_name: "{{ lookup('pipe', 'git config --global user.name || true') }}"
+git_email: "{{ lookup('pipe', 'git config --global user.email || true') }}"
+
+gitlab_host: gitlab.com
+
+# Optional: with tokens, gh and glab get logged in and the machine's SSH key is
+# uploaded for you. Set them here through the environment, or in
+# group_vars/all/secrets.yml (see secrets.example.yml).
+github_token: "{{ lookup('env', 'SETUP_GITHUB_TOKEN') }}"
+gitlab_token: "{{ lookup('env', 'SETUP_GITLAB_TOKEN') }}"
+
+# Tokens are referenced by variable name so they never show up in loop output.
+git_forges:
+  - name: GitHub
+    host: github.com
+    cli: gh
+    token_stdin_flag: --with-token
+    token_var: github_token
+    keys_url: https://github.com/settings/ssh/new
+  - name: GitLab
+    host: "{{ gitlab_host }}"
+    cli: glab
+    token_stdin_flag: --stdin
+    token_var: gitlab_token
+    keys_url: "https://{{ gitlab_host }}/-/user_settings/ssh_keys"
+
+# --- MCP servers ----------------------------------------------------------
+
+# Download DBLP's search index during setup (1.3 GB, unpacks to 4.2 GB) instead of
+# making the first search wait for it.
+dblp_prefetch_index: true
+
+google_scholar_dir: "{{ ansible_facts.user_dir }}/.local/share/mcp-servers/google-scholar"
+google_scholar_version: 738d60a4d69464731e7c5b3a61767c06ff2cec0d
+
+# Upstream's requirements are unpinned and no longer work as they resolve today:
+# mcp 2 removed FastMCP, and bibtexparser 2 dropped the module scholarly imports.
+google_scholar_pins:
+  - mcp<2
+  - bibtexparser<2
+
+# Registered with both Claude Code and Codex.
+mcp_servers:
+  - name: mcp-dblp
+    command: "{{ ansible_facts.user_dir }}/.local/bin/mcp-dblp"
+    args: []
+  - name: google-scholar
+    command: "{{ google_scholar_dir }}/.venv/bin/python"
+    args:
+      - "{{ google_scholar_dir }}/google_scholar_server.py"

@@ -1,0 +1,43 @@
+---
+# Claude Code only adds this marketplace by itself on the first interactive start.
+- name: Add the official Claude plugin marketplace
+  ansible.builtin.command: claude plugin marketplace add anthropics/claude-plugins-official
+  register: claude_marketplace
+  changed_when: "'already' not in claude_marketplace.stdout"
+
+- name: Install Superpowers for Claude Code
+  ansible.builtin.command: claude plugin install superpowers@claude-plugins-official
+  register: claude_superpowers
+  changed_when: "'already installed' not in claude_superpowers.stdout"
+
+# Codex's curated marketplace is only available after login, and its name is
+# reserved, so Superpowers comes from the marketplace in its own repository.
+- name: Check Codex's marketplaces
+  ansible.builtin.command: codex plugin marketplace list
+  register: codex_marketplaces
+  changed_when: false
+
+- name: Add the Superpowers marketplace to Codex
+  ansible.builtin.command: codex plugin marketplace add obra/superpowers
+  when: "'superpowers-dev' not in codex_marketplaces.stdout"
+  changed_when: true
+
+- name: Check Codex's plugins
+  ansible.builtin.command: codex plugin list
+  register: codex_plugins
+  changed_when: false
+
+- name: Install Superpowers for Codex
+  ansible.builtin.command: codex plugin add superpowers@superpowers-dev
+  when: codex_plugins.stdout is not search('superpowers@superpowers-dev\s+installed')
+  changed_when: true
+
+# gsd-build/get-shit-done is archived; development moved to open-gsd/gsd-core.
+- name: Install GSD for Claude Code and Codex
+  ansible.builtin.command: npx -y @opengsd/gsd-core@latest --claude --codex --global
+  args:
+    creates: ~/.claude/gsd-install-state.json
+  register: gsd_install
+  until: gsd_install is succeeded
+  retries: 3
+  delay: 15

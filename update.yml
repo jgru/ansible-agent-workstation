@@ -1,0 +1,34 @@
+---
+- name: Upgrade system packages
+  hosts: all
+  gather_facts: false
+  roles:
+    - bootstrap
+  tasks:
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+      become: true
+
+- name: Upgrade the tools in the login user's home
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: "{{ ansible_facts.user_dir }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  tasks:
+    - name: Run each tool's own updater
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - claude update
+        - claude plugin marketplace update claude-plugins-official
+        - claude plugin update superpowers@claude-plugins-official
+        - npm install -g @openai/codex@latest
+        - codex plugin marketplace upgrade superpowers-dev
+        - codex plugin add superpowers@superpowers-dev
+        - herdr update
+        - uv self update
+        - uv tool upgrade mcp-dblp
+        - mcp-dblp-index update
+        - npx -y @opengsd/gsd-core@latest --claude --codex --global
+      changed_when: true

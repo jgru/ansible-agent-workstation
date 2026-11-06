@@ -1,0 +1,8 @@
+---
+# Published at https://api.github.com/meta and in GitLab's documentation.
+# Pinned so the first connection doesn't have to trust whatever answers.
+git_known_hosts:
+  github.com: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+  gitlab.com: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf
+
+git_ssh_key: "{{ ansible_facts.user_dir }}/.ssh/id_ed25519"

@@ -1,0 +1,98 @@
+---
+# At the top because Debian's .bashrc returns early for non-interactive shells,
+# and `ssh host herdr` needs this too.
+- name: Put ~/.local/bin on PATH
+  ansible.builtin.lineinfile:
+    path: ~/.bashrc
+    line: export PATH="$HOME/.local/bin:$PATH"
+    insertbefore: BOF
+    create: true
+    mode: "0644"
+
+# Keeps npm -g out of system directories, so agents can update tools themselves.
+- name: Install global npm packages under ~/.local
+  ansible.builtin.lineinfile:
+    path: ~/.npmrc
+    line: prefix=${HOME}/.local
+    create: true
+    mode: "0600"
+
+# Claude Code's x86_64 build needs x86-64-v3 (AVX2 and others) and crashes
+# without it, whether it comes from its installer or from npm. Celeron and
+# Pentium NUCs lack it, and so does Docker's qemu emulation on Apple Silicon.
+# glibc's loader asks the CPU itself, so it answers correctly under emulation
+# too, unlike /proc/cpuinfo.
+- name: Ask the CPU which x86-64 level it supports
+  ansible.builtin.command: /lib64/ld-linux-x86-64.so.2 --help
+  register: glibc_loader
+  changed_when: false
+  when: ansible_facts.architecture == 'x86_64'
+
+- name: Stop if Claude Code can't run on this CPU
+  ansible.builtin.assert:
+    that: glibc_loader is skipped or 'x86-64-v3 (supported' in glibc_loader.stdout
+    fail_msg: >-
+      This CPU lacks AVX2, which Claude Code's x86_64 build needs, so Claude Code
+      can't run here. Emulated x86_64 usually lacks it too: on Apple Silicon, run
+      test/run.sh with PLATFORM=linux/arm64.
+    quiet: true
+
+# The installs download from the internet, so a dropped connection is retried
+# instead of failing the whole run.
+- name: Install Claude Code
+  ansible.builtin.shell: set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash
+  args:
+    executable: /bin/bash
+    creates: ~/.local/bin/claude
+  register: claude_install
+  until: claude_install is succeeded
+  retries: 3
+  delay: 15
+
+- name: Install Codex
+  ansible.builtin.command: npm install -g @openai/codex
+  args:
+    creates: ~/.local/bin/codex
+  register: codex_install
+  until: codex_install is succeeded
+  retries: 3
+  delay: 15
+
+- name: Install herdr
+  ansible.builtin.shell: set -o pipefail; curl -fsSL https://herdr.dev/install.sh | sh
+  args:
+    executable: /bin/bash
+    creates: ~/.local/bin/herdr
+  register: herdr_install
+  until: herdr_install is succeeded
+  retries: 3
+  delay: 15
+
+- name: Install uv
+  ansible.builtin.shell: set -o pipefail; curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 sh
+  args:
+    executable: /bin/bash
+    creates: ~/.local/bin/uv
+  register: uv_install
+  until: uv_install is succeeded
+  retries: 3
+  delay: 15
+
+# Codex only creates its config directory on first start, and herdr won't
+# install its integration without it.
+- name: Create Codex's config directory
+  ansible.builtin.file:
+    path: ~/.codex
+    state: directory
+    mode: "0700"
+
+- name: Check herdr's agent integrations
+  ansible.builtin.command: herdr integration status
+  register: herdr_integrations
+  changed_when: false
+
+- name: Let herdr see agent state directly
+  ansible.builtin.command: "herdr integration install {{ item }}"
+  loop: [claude, codex]
+  when: "(item ~ ': current') not in herdr_integrations.stdout"
+  changed_when: true
